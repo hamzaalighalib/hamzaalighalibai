@@ -1,266 +1,152 @@
 const express = require("express");
-const natural = require("natural");
-const pos = require("pos");
+const fetch = require("node-fetch");
 const fs = require("fs");
+const readline = require("readline");
 const path = require("path");
-const axios = require("axios");
-const cheerio = require("cheerio");
-const htmlToText = require('html-to-text');
-
+const natural = require("natural");
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-const data = require("./hamza.json");
+const port = 9000; // Change as needed
 
+// Middleware to serve static files from the 'public' folder
 app.use(express.static(path.join(__dirname, "public")));
 
+// Predefined questions and answers
+const predefinedAnswers = {
+  "Who developed you?":
+    "I was developed by Hamza Ali Ghalib, a renowned web developer from Pakistan. His expertise in web development has been pivotal in creating and maintaining me.",
+  "What is your purpose?":
+    "My purpose is to assist users by providing information, answering questions, and engaging in meaningful conversations. I am here to help make information more accessible and interactions more efficient.",
+  "What is your name?":
+    "My name is Ghalib AI trained by Hamza Ali Ghalib and Danial Azam. You can refer to me as Hamza Ali Ghalib's AI, created to assist and engage with users.",
+  "What technologies were used to build you?":
+    "I was built using a combination of modern web technologies including HTML, CSS, JavaScript, and various libraries and frameworks. My backend may involve server-side technologies and APIs to handle requests and responses.",
+  "Can you tell me about Hamza Ali Ghalib?":
+    "Hamza Ali Ghalib is a well-known web developer based in Pakistan. He has made significant contributions to the field of web development and is known for his expertise in creating advanced web applications and tools.",
+  "Who is Danial Azam?":
+    "Danial Azam is a famous web developer and a great friend of Hamza Ali Ghalib. He is recognized for his contributions to web development and his collaboration on various projects. Danial Azam is not a musician but rather a prominent figure in the web development community.",
+  "What are some of your capabilities?":
+    "I can answer questions, provide information, engage in conversations, and assist with various topics related to web development and general knowledge. If you have specific queries or need help with something, feel free to ask!",
+  "How can I use your services?":
+    "Simply type your questions or messages, and I will do my best to provide you with accurate and helpful responses. Whether you need information, assistance, or just a chat, I'm here to help!",
+  "How do you handle user data?":
+    "I prioritize user privacy and data security. Any interactions with me are processed in accordance with privacy and security best practices. Personal data is handled with care and in compliance with relevant regulations.",
+  "Can I provide feedback about your responses?":
+    "Yes, feedback is always welcome! If you have suggestions or comments about my responses or functionality, please let me know so I can improve and better serve your needs.",
+};
+
+// Function to read the context data from the file
+function readContextFromFile() {
+  return new Promise((resolve, reject) => {
+    const fileStream = fs.createReadStream("./data.txt"); // Adjust path as needed
+    const rl = readline.createInterface({
+      input: fileStream,
+      crlfDelay: Infinity,
+    });
+
+    let context = "";
+    rl.on("line", (line) => {
+      context += line + "\n"; // Append each line to the context
+    });
+
+    rl.on("close", () => {
+      resolve(context.trim()); // Resolve with the complete context
+    });
+
+    rl.on("error", (err) => {
+      reject(err); // Reject the promise on error
+    });
+  });
+}
+
+async function query(context, message) {
+  try {
+    const response = await fetch(
+      "https://api-inference.huggingface.co/models/deepset/bert-large-uncased-whole-word-masking-squad2",
+      {
+        headers: {
+          Authorization: "Bearer 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",
+          "Content-Type": "application/json",
+        },
+        method: "POST",
+        body: JSON.stringify({
+          inputs: {
+            question: message,
+            context: context,
+          },
+        }),
+      }
+    );
+    const result = await response.json();
+    return result.answer; // Assuming API returns an 'answer' field
+  } catch (error) {
+    console.error("Error making request:", error);
+    return "Error occurred while processing your request.";
+  }
+}
+
+// NLP functions using natural
+function analyzeSentiment(text) {
+  const analyzer = new natural.SentimentAnalyzer(
+    "English",
+    natural.PorterStemmer,
+    "afinn"
+  );
+  const sentiment = analyzer.getSentiment(text.split(/\s+/));
+  return sentiment > 0 ? "positive" : sentiment < 0 ? "negative" : "neutral";
+}
+
+function tokenizeText(text) {
+  const tokenizer = new natural.WordTokenizer();
+  return tokenizer.tokenize(text);
+}
+
+// Define the /chat route
 app.get("/chat", async (req, res) => {
-    const userMessage = req.query.message.toLowerCase();
-    let response = generateResponse(userMessage);
+  const message = req.query.message || "Hi"; // Default question if no query parameter is provided
 
-
-    //math...
-    // Check if the message contains a mathematical expression
-    if (containsMathExpression(userMessage)) {
-        // Evaluate the expression and include the result in the response
-        const calculationResult = evaluateMathExpression(userMessage);
-        response = ` Your result: ${calculationResult} - <br>`+response;
-    } 
-
-
-    
-
-    if (userMessage.includes("oh") || userMessage.includes("oops")) {
-        response += " " + generateRandomInterjectionResponse();
+  // Check if the message matches one of the predefined questions
+  if (predefinedAnswers[message]) {
+    res.send(predefinedAnswers[message]); // Send predefined answer
+  } else {
+    try {
+      const context = await readContextFromFile();
+      const answer = await query(context, message);
+      res.send(answer); // Send the answer from the API
+    } catch (error) {
+      console.error("Error in /chat route:", error);
+      res.status(500).send("Internal Server Error");
     }
-
-    if (isGreeting(userMessage)) {
-        response += " " + generateRandomGreetingResponse();
-    }
-
-    if (isInformation(userMessage)) {
-        const informationSentences = extractInformation(userMessage);
-        saveInformationToJSON(userMessage,informationSentences);
-        response += ` I think you may know about ${informationSentences.join(" ")}. Please provide me more information about this, so I can remember it for next time.`;
-    }
-
-    const matchedAnswer = findMatchingAnswer(userMessage);
-    if (!matchedAnswer) {
-        response += " Thanks for assisting us.";
-        try {
-            const googleResult = await searchGoogle(userMessage);
-            saveInformationToJSON(userMessage,[googleResult]);
-            response += `${googleResult}. I'll remember this for next time.`;
-        } catch (error) {
-            console.error("Error searching Google:", error);
-        }
-    } else {
-        response += " " + matchedAnswer;
-    }
-
-    res.send(response);
+  }
 });
 
+// Define the /sentiment route for NLP tasks
+app.get("/sentiment", (req, res) => {
+  const text = req.query.text || ""; // Default text if no query parameter is provided
 
+  try {
+    const sentiment = analyzeSentiment(text);
+    res.send({ sentiment }); // Send the sentiment analysis result
+  } catch (error) {
+    console.error("Error in /sentiment route:", error);
+    res.status(500).send("Internal Server Error");
+  }
+});
 
+// Define the /tokenize route for tokenization
+app.get("/tokenize", (req, res) => {
+  const text = req.query.text || ""; // Default text if no query parameter is provided
 
-//math functions....
-// Function to check if the message contains a mathematical expression
-function containsMathExpression(message) {
-    // Regular expression to match and extract mathematical expressions
-    const mathRegex = /(?:\s|^)(\d+(?:\.\d+)?(?:[\+\-\*\/\^]\d+(?:\.\d+)?)+)(?:\s|$)/g;
-    const matches = message.match(mathRegex);
+  try {
+    const tokens = tokenizeText(text);
+    res.send({ tokens }); // Send the tokenized text
+  } catch (error) {
+    console.error("Error in /tokenize route:", error);
+    res.status(500).send("Internal Server Error");
+  }
+});
 
-    if (matches) {
-        const expressions = matches.map(match => match.trim());
-        return expressions;
-    }
-
-    return null;
-}
-
-
-// Function to evaluate a mathematical expression
-function evaluateMathExpression(expression) {
-    try {
-        // Using JavaScript's eval() to evaluate the expression
-        const result = eval(expression);
-        return result;
-    } catch (error) {
-        // Handle potential errors during evaluation
-        console.error("Error evaluating math expression:", error);
-        return "Sorry, I couldn't evaluate that expression.";
-    }
-}
-
-
-
-
-async function searchGoogle(query) {
-    const googleSearchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
-    try {
-        const response = await axios.get(googleSearchUrl);
-        const html = response.data;
-
-        // Load HTML content into Cheerio
-        const $ = cheerio.load(html);
-
-        // Extract specific information about the user's query
-        const description = $("div.BNeawe.vvjwJb.AP7Wnd").first().text();
-
-        // Construct the response with the extracted information
-        const responseText = `I think ${description}`;
-        return responseText;
-    } catch (error) {
-        throw error;
-    }
-}
-
-function generateResponse(userMessage) {
-    const matchedAnswer = findMatchingAnswer(userMessage);
-    if (matchedAnswer) {
-        return matchedAnswer;
-    }
-
-    const taggedWords = new pos.Lexer().lex(userMessage);
-    const tagger = new pos.Tagger();
-    const taggedWordsWithPOS = tagger.tag(taggedWords);
-
-    const nouns = extractNouns(userMessage);
-    const verbs = extractVerbs(userMessage);
-
-    if (nouns.length > 0 && verbs.length > 0) {
-        return `It appears you're inquiring about ${nouns.join(" ")} and expressing interest in ${verbs.join(" ")}.`;
-    } else if (nouns.length > 0) {
-        return `You've mentioned ${nouns.join(" ")}. Can you provide more details on that?`;
-    } else if (verbs.length > 0) {
-        return `You seem interested in ${verbs.join(" ")}. What specific information are you seeking?`;
-    } else {
-        return "I'm sorry, I didn't quite catch that. Could you please provide more context?";
-    }
-}
-
-function extractNouns(userMessage) {
-    const taggedWords = new pos.Lexer().lex(userMessage);
-    const tagger = new pos.Tagger();
-    const taggedWordsWithPOS = tagger.tag(taggedWords);
-    const nouns = [];
-    taggedWordsWithPOS.forEach((word) => {
-        if (word[1] === "NN" || word[1] === "NNS") {
-            nouns.push(word[0]);
-        }
-    });
-    return nouns;
-}
-
-function extractVerbs(userMessage) {
-    const taggedWords = new pos.Lexer().lex(userMessage);
-    const tagger = new pos.Tagger();
-    const taggedWordsWithPOS = tagger.tag(taggedWords);
-    const verbs = [];
-    taggedWordsWithPOS.forEach((word) => {
-        if (word[1].startsWith("VB")) {
-            verbs.push(word[0]);
-        }
-    });
-    return verbs;
-}
-
-function isInformation(userMessage) {
-    return userMessage.includes("information");
-}
-
-function extractInformation(userMessage) {
-    const sentences = userMessage.split(/[.!?]/);
-    const informationSentences = sentences.filter((sentence) =>
-        sentence.toLowerCase().includes("information"),
-    );
-    return informationSentences;
-}
-
-
-
-function escapeHTML(html) {
-    return html.replace(/&/g, '&amp;')
-               .replace(/</g, '&lt;')
-               .replace(/>/g, '&gt;')
-               .replace(/"/g, '&quot;')
-               .replace(/'/g, '&#39;');
-}
-
-function saveInformationToJSON(uq, informationSentences) {
-    // Combine information sentences into a single string
-    const combinedHTML = informationSentences.join(" ");
-
-    // Escape HTML tags
-    const escapedHTML = escapeHTML(combinedHTML);
-
-    const newData = {
-        question: uq,
-        answer: escapedHTML.trim(),
-    };
-
-    // Assuming data is defined somewhere in your code
-    data.data.push(newData);
-
-    fs.writeFile("./hamza.json", JSON.stringify(data, null, 2), (err) => {
-        if (err) {
-            console.error("Error writing to hamza.json:", err);
-        } else {
-            console.log("Data added to hamza.json:", newData);
-        }
-    });
-}
-
-
-
-function generateRandomInterjectionResponse() {
-    const interjections = [
-        "Nice!",
-        "Cool!",
-        "Awesome!",
-        "Sweet!",
-        "Great!",
-        "Fantastic!",
-        "amazing",
-        "wow",
-        "woww",
-        "wowww",
-        "wowwww",
-        "wowwwww",
-        "nice",
-        "ofcourse",
-        "",
-    ];
-    return interjections[Math.floor(Math.random() * interjections.length)];
-}
-
-function generateRandomGreetingResponse() {
-    const greetings = [
-        "Hello!",
-        "Hi there!",
-        "Hey!",
-        "Greetings!",
-        "What's up?",
-        "Howdy!",
-    ];
-    return greetings[Math.floor(Math.random() * greetings.length)];
-}
-
-function isGreeting(userMessage) {
-    const greetings = ["hello", "hi", "hey", "greetings", "what's up", "howdy"];
-    return greetings.includes(userMessage.toLowerCase());
-}
-
-function findMatchingAnswer(userMessage) {
-    for (const item of data.data) {
-        if (item.question.toLowerCase().includes(userMessage)) {
-            return item.answer;
-        }
-    }
-    return null;
-}
-
-app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
+// Start the server
+app.listen(port, () => {
+  console.log(`Server is running at http://localhost:${port}`);
 });
