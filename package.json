@@ -1,25 +1,41 @@
 {
-  "name": "nodejs",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "name": "glitch-hello-node",
+  "version": "0.1.0",
+  "description": "A simple Node app with express and brain.js, instantly up and running. Built to be remixed on Glitch.com.",
+  "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node server.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
-    "@google-cloud/translate": "^8.3.0",
-    "@types/node": "^18.0.6",
-    "axios": "^1.7.2",
-    "cheerio": "^1.0.0-rc.12",
-    "compromise": "^14.13.0",
+    "@tensorflow-models/mobilenet": "^2.1.1",
+    "@tensorflow/tfjs": "^4.21.0",
+    "@tensorflow/tfjs-node": "^4.21.0",
+    "body-parser": "^1.20.2",
+    "brain.js": "^1.6.1",
+    "canvas": "^2.11.2",
+    "cors": "^2.8.5",
+    "csv-parser": "^3.0.0",
+    "date-fns": "^3.6.0",
     "express": "^4.19.2",
-    "html-to-text": "^9.0.5",
-    "mysql": "^2.18.1",
-    "natural": "^7.0.5",
-    "nlp_compromise": "^7.0.0",
-    "pos": "^0.4.2"
-  }
+    "fs": "^0.0.1-security",
+    "multer": "^1.4.5-lts.1",
+    "natural": "^8.0.1",
+    "node-nlp": "^4.27.0",
+    "path": "^0.12.7",
+    "sharp": "^0.33.5"
+  },
+  "engines": {
+    "node": "14.x"
+  },
+  "repository": {
+    "url": "https://glitch.com/edit/#!/glitch-hello-node"
+  },
+  "license": "MIT",
+  "keywords": [
+    "node",
+    "glitch",
+    "express",
+    "brain.js",
+    "natural"
+  ]
 }
