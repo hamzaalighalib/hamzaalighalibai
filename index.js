@@ -1,152 +1,80 @@
-const express = require("express");
-const fetch = require("node-fetch");
-const fs = require("fs");
-const readline = require("readline");
-const path = require("path");
-const natural = require("natural");
+const express = require('express');
+const multer = require('multer');
+const sharp = require('sharp');
+const tf = require('@tensorflow/tfjs-node');
+const path = require('path');
+const fs = require('fs');
 
+// Set up express app
 const app = express();
-const port = 9000; // Change as needed
+const PORT = process.env.PORT || 3000;
 
-// Middleware to serve static files from the 'public' folder
-app.use(express.static(path.join(__dirname, "public")));
+// Set up multer for file uploads
+const upload = multer({ dest: 'uploads/' });
 
-// Predefined questions and answers
-const predefinedAnswers = {
-  "Who developed you?":
-    "I was developed by Hamza Ali Ghalib, a renowned web developer from Pakistan. His expertise in web development has been pivotal in creating and maintaining me.",
-  "What is your purpose?":
-    "My purpose is to assist users by providing information, answering questions, and engaging in meaningful conversations. I am here to help make information more accessible and interactions more efficient.",
-  "What is your name?":
-    "My name is Ghalib AI trained by Hamza Ali Ghalib and Danial Azam. You can refer to me as Hamza Ali Ghalib's AI, created to assist and engage with users.",
-  "What technologies were used to build you?":
-    "I was built using a combination of modern web technologies including HTML, CSS, JavaScript, and various libraries and frameworks. My backend may involve server-side technologies and APIs to handle requests and responses.",
-  "Can you tell me about Hamza Ali Ghalib?":
-    "Hamza Ali Ghalib is a well-known web developer based in Pakistan. He has made significant contributions to the field of web development and is known for his expertise in creating advanced web applications and tools.",
-  "Who is Danial Azam?":
-    "Danial Azam is a famous web developer and a great friend of Hamza Ali Ghalib. He is recognized for his contributions to web development and his collaboration on various projects. Danial Azam is not a musician but rather a prominent figure in the web development community.",
-  "What are some of your capabilities?":
-    "I can answer questions, provide information, engage in conversations, and assist with various topics related to web development and general knowledge. If you have specific queries or need help with something, feel free to ask!",
-  "How can I use your services?":
-    "Simply type your questions or messages, and I will do my best to provide you with accurate and helpful responses. Whether you need information, assistance, or just a chat, I'm here to help!",
-  "How do you handle user data?":
-    "I prioritize user privacy and data security. Any interactions with me are processed in accordance with privacy and security best practices. Personal data is handled with care and in compliance with relevant regulations.",
-  "Can I provide feedback about your responses?":
-    "Yes, feedback is always welcome! If you have suggestions or comments about my responses or functionality, please let me know so I can improve and better serve your needs.",
-};
+// Serve static files from the public folder
+app.use(express.static('public'));
 
-// Function to read the context data from the file
-function readContextFromFile() {
-  return new Promise((resolve, reject) => {
-    const fileStream = fs.createReadStream("./data.txt"); // Adjust path as needed
-    const rl = readline.createInterface({
-      input: fileStream,
-      crlfDelay: Infinity,
-    });
+// Load the pre-trained TensorFlow model
+let model;
+(async () => {
+    model = await tf.loadLayersModel('file://./model/model.json');
+    console.log('Model loaded');
+})();
 
-    let context = "";
-    rl.on("line", (line) => {
-      context += line + "\n"; // Append each line to the context
-    });
+// Function to process and classify an image
+async function classifyImage(filePath) {
+    const imageSize = 64;
 
-    rl.on("close", () => {
-      resolve(context.trim()); // Resolve with the complete context
-    });
+    // Process the image: resize, grayscale, and normalize
+    const imageBuffer = await sharp(filePath)
+        .resize(imageSize, imageSize)
+        .grayscale()
+        .raw()
+        .toBuffer();
 
-    rl.on("error", (err) => {
-      reject(err); // Reject the promise on error
-    });
-  });
+    // Convert to a tensor
+    const imageTensor = tf.tensor3d(new Uint8Array(imageBuffer), [imageSize, imageSize, 1], 'float32');
+    const input = imageTensor.expandDims(0).div(255); // Add batch dimension and normalize
+
+    // Perform prediction
+    const prediction = model.predict(input);
+    let score = prediction.dataSync()[0]; // Get the score (probability between 0 and 1)
+
+    // Return score and label (porn or not porn)
+score = scientificToDecimal(score);
+  const label = score >= 0.587654 ?  'porn':'not porn';
+    return { score, label };
 }
 
-async function query(context, message) {
-  try {
-    const response = await fetch(
-      "https://api-inference.huggingface.co/models/deepset/bert-large-uncased-whole-word-masking-squad2",
-      {
-        headers: {
-          Authorization: "Bearer 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",
-          "Content-Type": "application/json",
-        },
-        method: "POST",
-        body: JSON.stringify({
-          inputs: {
-            question: message,
-            context: context,
-          },
-        }),
-      }
-    );
-    const result = await response.json();
-    return result.answer; // Assuming API returns an 'answer' field
-  } catch (error) {
-    console.error("Error making request:", error);
-    return "Error occurred while processing your request.";
-  }
+
+function scientificToDecimal(scientific) {
+  return parseFloat(scientific).toFixed(20); // adjust the toFixed value to change the decimal places
 }
-
-// NLP functions using natural
-function analyzeSentiment(text) {
-  const analyzer = new natural.SentimentAnalyzer(
-    "English",
-    natural.PorterStemmer,
-    "afinn"
-  );
-  const sentiment = analyzer.getSentiment(text.split(/\s+/));
-  return sentiment > 0 ? "positive" : sentiment < 0 ? "negative" : "neutral";
-}
-
-function tokenizeText(text) {
-  const tokenizer = new natural.WordTokenizer();
-  return tokenizer.tokenize(text);
-}
-
-// Define the /chat route
-app.get("/chat", async (req, res) => {
-  const message = req.query.message || "Hi"; // Default question if no query parameter is provided
-
-  // Check if the message matches one of the predefined questions
-  if (predefinedAnswers[message]) {
-    res.send(predefinedAnswers[message]); // Send predefined answer
-  } else {
+// Handle file upload and classification
+app.post('/classify', upload.single('image'), async (req, res) => {
     try {
-      const context = await readContextFromFile();
-      const answer = await query(context, message);
-      res.send(answer); // Send the answer from the API
-    } catch (error) {
-      console.error("Error in /chat route:", error);
-      res.status(500).send("Internal Server Error");
+        if (!req.file) {
+            return res.status(400).json({ error: 'No file uploaded' });
+        }
+
+        const filePath = req.file.path;
+
+        // Classify the uploaded image
+        const { score, label } = await classifyImage(filePath);
+
+        // Delete the temp file after processing
+        fs.unlinkSync(filePath);
+
+        // Return the classification result (score and label)
+        res.json({ score, label });
+    } catch (err) {
+        console.error('Error classifying image:', err);
+        res.status(500).json({ error: 'Internal server error' });
     }
-  }
-});
-
-// Define the /sentiment route for NLP tasks
-app.get("/sentiment", (req, res) => {
-  const text = req.query.text || ""; // Default text if no query parameter is provided
-
-  try {
-    const sentiment = analyzeSentiment(text);
-    res.send({ sentiment }); // Send the sentiment analysis result
-  } catch (error) {
-    console.error("Error in /sentiment route:", error);
-    res.status(500).send("Internal Server Error");
-  }
-});
-
-// Define the /tokenize route for tokenization
-app.get("/tokenize", (req, res) => {
-  const text = req.query.text || ""; // Default text if no query parameter is provided
-
-  try {
-    const tokens = tokenizeText(text);
-    res.send({ tokens }); // Send the tokenized text
-  } catch (error) {
-    console.error("Error in /tokenize route:", error);
-    res.status(500).send("Internal Server Error");
-  }
 });
 
 // Start the server
-app.listen(port, () => {
-  console.log(`Server is running at http://localhost:${port}`);
+app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
 });
